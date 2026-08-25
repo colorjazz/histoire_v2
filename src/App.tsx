@@ -264,6 +264,7 @@ export default function App() {
 
   const [periodesPermises, setPeriodesPermises] = useState<number[]>([]);
   const [periodesSelectionnees, setPeriodesSelectionnees] = useState<number[]>([]);
+  const [difficulteGroupe, setDifficulteGroupe] = useState<number>(3); // NIVEAU DE DIFFICULTÉ
 
   // GESTION DES ERREURS
   const [erreurGlobal, setErreurGlobal] = useState<string | null>(null);
@@ -284,6 +285,7 @@ export default function App() {
             const data = snap.docs[0].data();
             const liste = data.periodesDebloquees || [1,2,3,4,5,6,7,8];
             setPeriodesPermises(liste); setPeriodesSelectionnees(liste);
+            setDifficulteGroupe(data.difficulte || 3); // LECTURE DE LA DIFFICULTÉ DU PROF
           }
         } catch (e) { console.error("Erreur récupération groupe", e); }
       };
@@ -302,6 +304,18 @@ export default function App() {
     if (currentView === 'sectionB') { setQuestionB(null); setFeedbackB(null); setReponseB(""); }
     if (currentView === 'sectionC') { setQuestionC(null); setFeedbackC(null); setReponseC(""); }
   };
+
+  // --- TRADUCTION DE LA DIFFICULTÉ EN PROMPT IA ---
+  function genererConsigneDifficulte() {
+    switch(difficulteGroupe) {
+      case 1: return "\nNIVEAU DE LECTURE (1/5) : Utilise un vocabulaire très simple, des phrases courtes et des concepts très explicites. Adapté pour des élèves en difficulté d'apprentissage.";
+      case 2: return "\nNIVEAU DE LECTURE (2/5) : Utilise un vocabulaire accessible et des structures de phrases simples.";
+      case 3: return "\nNIVEAU DE LECTURE (3/5) : Utilise un vocabulaire standard adapté à des élèves réguliers de 4e secondaire.";
+      case 4: return "\nNIVEAU DE LECTURE (4/5) : Utilise un vocabulaire riche, soutenu et des textes plus denses.";
+      case 5: return "\nNIVEAU DE LECTURE (5/5) : Utilise un vocabulaire académique complexe, des textes denses avec des concepts implicites. Exige une analyse approfondie.";
+      default: return "\nNIVEAU DE LECTURE : Utilise un vocabulaire standard.";
+    }
+  }
 
   function genererContexteTemporel() {
     if (periodesSelectionnees.length === 0) return "";
@@ -370,6 +384,7 @@ export default function App() {
     const nivCalcul = maxId <= 4 ? 3 : 4;
     const systemPrompt = `Tu es un concepteur d'examen pour le cours d'Histoire du Québec et du Canada, secondaire ${nivCalcul} (programme du Québec). Génère une liste de 20 questions à choix multiples (QCM) indépendantes de type "Section A" de l'épreuve unique. 
     ${genererContexteTemporel()}
+    ${genererConsigneDifficulte()}
     Règle importante : Pour chaque question à choix multiples, répartis la bonne réponse de façon aléatoire entre les choix A, B, C et D. Ne la place jamais de façon répétitive au même endroit. Réponds UNIQUEMENT en format JSON valide sous forme de tableau, sans balises markdown:
     [ { "question": "Texte de la question", "choix": ["Choix 1", "Choix 2", "Choix 3", "Choix 4"], "indexReponseCorrecte": 0, "explication": "Courte explication pédagogique." } ]`;
     try {
@@ -393,11 +408,20 @@ export default function App() {
   async function genererQuestionB() {
     setLoadingQuestionB(true); setQuestionB(null); setReponseB(""); setFeedbackB(null); setErreurGlobal(null);
     setPlacementOrdre([]); setPlacementAvantApres({}); setResultatSituerTemps(null); setLieuSelectionne(null); setResultatSituerEspace(null);
-    const nbDocuments = currentOp.id === "mise-en-relation" ? "TROIS documents distincts (un par relation à établir)" : (currentOp.id === "liens-causalite" ? "TROIS documents distincts, chacun apportant l'information nécessaire pour établir un des trois faits de la chaîne (A, B, ou C)" : "1 à 2 courts documents");
+    
+    // GESTION DU NOMBRE DE DOCUMENTS EN FONCTION DE LA DIFFICULTÉ
+    let nbDocuments = "1 à 2 courts documents";
+    if (currentOp.id === "mise-en-relation" || currentOp.id === "liens-causalite") {
+      nbDocuments = "TROIS documents distincts";
+    } else if (currentOp.id === "continuite-changement" || currentOp.id === "comparaisons") {
+      nbDocuments = difficulteGroupe >= 4 ? "TROIS documents distincts" : "DEUX documents distincts";
+    }
+
     let systemPrompt: string;
     if (currentOp.id === "espace-temps") {
       systemPrompt = `Tu es un concepteur de matériel pédagogique pour le cours d'Histoire du Québec et du Canada. Tu dois créer un exercice pour pratiquer l'opération intellectuelle suivante: "${currentOp.nom}". Définition: ${currentOp.def}
 ${genererContexteTemporel()}
+${genererConsigneDifficulte()}
 Choisis aléatoirement et équitablement le champ "type" entre "temps" et "espace".
 SI type = "espace":
 - Choisis d'abord une "carteEra" parmi les 4 valeurs suivantes, EN RESPECTANT STRICTEMENT LA CONTRAINTE DE TEMPS IMPOSÉE :
@@ -422,12 +446,14 @@ Réponds UNIQUEMENT en format JSON valide:
     } else if (currentOp.id === "continuite-changement" || currentOp.id === "comparaisons") {
       systemPrompt = `Tu es un concepteur de matériel pédagogique pour le cours d'Histoire du Québec et du Canada. Tu dois créer un dossier documentaire pour pratiquer l'opération intellectuelle suivante: "${currentOp.nom}". Définition: ${currentOp.def} La tâche doit demander à l'élève de: ${currentOp.consigneType}.
 ${genererContexteTemporel()}
+${genererConsigneDifficulte()}
 Environ une fois sur trois, base ta question sur l'une de ces paires de cartes (si elles sont compatibles avec la période imposée) – remplis "utiliserCarteHistorique": true et "carteHistoriqueType" (choisis parmi: "1763-1774", "1774-1783", "1763-1783", "1763-1774-1783", "1867-1999"). Laisse "documents" vide [].
 Les deux tiers du temps, ignore les cartes: mets "utiliserCarteHistorique": false, et rédige ${nbDocuments} fictifs mais historiquement exacts.
 Réponds UNIQUEMENT en format JSON valide: {"periode":"nom de la période","utiliserCarteHistorique":true ou false,"carteHistoriqueType":"...","documents":[{"titre":"","texte":""}],"consigne":""}`;
     } else {
       systemPrompt = `Tu es un concepteur de matériel pédagogique pour le cours d'Histoire du Québec et du Canada. Tu dois créer un dossier documentaire pour pratiquer l'opération intellectuelle suivante: "${currentOp.nom}". Définition: ${currentOp.def} La tâche doit demander à l'élève de: ${currentOp.consigneType}.
 ${genererContexteTemporel()}
+${genererConsigneDifficulte()}
 Rédige ${nbDocuments} documents fictifs mais historiquement exacts. Réponds UNIQUEMENT en format JSON valide: {"periode":"nom de la période","documents":[{"titre":"","texte":""}],"consigne":""}`;
     }
     try {
@@ -475,6 +501,7 @@ Rédige ${nbDocuments} documents fictifs mais historiquement exacts. Réponds UN
  - Le dossier documentaire ne doit contenir QUE du texte. N'inclus AUCUNE image.
  - Pour chaque document, indique un "typeDoc" précis ("Texte" ou "Statistique").
  ${genererContexteTemporel()}
+ ${genererConsigneDifficulte()}
 Réponds UNIQUEMENT en format JSON valide:
 {
   "typeTache": "description" ou "explication", "periode": "Nom de la période historique", "contexte": "Mise en contexte globale du dossier", "consigne": "La question exacte posée à l'élève",
