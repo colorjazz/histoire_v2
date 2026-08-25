@@ -921,4 +921,4 @@ Réponds UNIQUEMENT en format JSON valide:
       )}
     </>
   );
-}
+} 
